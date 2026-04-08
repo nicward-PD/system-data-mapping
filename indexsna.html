@@ -1,0 +1,509 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dorset Council System Map</title>
+    
+    <!-- Load React, ReactDOM, Babel (for JSX), and Tailwind CSS -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <style>
+        /* Custom animation for the details panel */
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .animate-fade-in {
+            animation: fadeIn 0.3s ease-out forwards;
+        }
+        /* Hide scrollbar for a cleaner look but keep functionality */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+    </style>
+</head>
+<body class="bg-slate-50 overflow-hidden">
+    
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef, useMemo } = React;
+
+        // --- ICONS (Replacing lucide-react for standalone usage) ---
+        const IconBase = ({ size = 24, className = "", children, ...props }) => (
+            <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} {...props}>
+                {children}
+            </svg>
+        );
+        const ZoomIn = (p) => <IconBase {...p}><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></IconBase>;
+        const ZoomOut = (p) => <IconBase {...p}><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="8" y1="11" x2="14" y2="11"/></IconBase>;
+        const Maximize = (p) => <IconBase {...p}><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></IconBase>;
+        const Search = (p) => <IconBase {...p}><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></IconBase>;
+        const ExternalLink = (p) => <IconBase {...p}><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></IconBase>;
+        const Activity = (p) => <IconBase {...p}><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></IconBase>;
+        const Network = (p) => <IconBase {...p}><rect x="16" y="16" width="6" height="6" rx="1"/><rect x="2" y="16" width="6" height="6" rx="1"/><rect x="9" y="2" width="6" height="6" rx="1"/><path d="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3"/><path d="M12 12V8"/></IconBase>;
+        const Layers = (p) => <IconBase {...p}><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 12 12 17 22 12"/><polyline points="2 17 12 22 22 17"/></IconBase>;
+        const Building2 = (p) => <IconBase {...p}><path d="M6 22V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v18Z"/><path d="M6 12H4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2"/><path d="M18 9h2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-2"/><path d="M10 6h4"/><path d="M10 10h4"/><path d="M10 14h4"/><path d="M10 18h4"/></IconBase>;
+        const Target = (p) => <IconBase {...p}><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></IconBase>;
+        const Zap = (p) => <IconBase {...p}><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></IconBase>;
+
+        // --- DATASET ---
+        const rawNodes = [
+          // Level 1: Organisations
+          { id: 'dc', level: 1, category: 'Local authority', name: 'Dorset Council', type: 'Statutory', desc: 'Unitary authority for rural Dorset. Responsible for planning, highways, waste, economic development, housing, countryside management.', url: 'https://www.dorsetcouncil.gov.uk/protecting-our-environment' },
+          { id: 'bcp', level: 1, category: 'Local authority', name: 'BCP Council', type: 'Statutory', desc: 'Unitary authority for Bournemouth, Christchurch and Poole. Supporting authority for the Local Nature Recovery Strategy.', url: 'https://www.bcpcouncil.gov.uk' },
+          { id: 'ne', level: 1, category: 'National agency', name: 'Natural England', type: 'Statutory', desc: "Government's adviser for the natural environment. Leads nature recovery network nationally.", url: 'https://www.gov.uk/government/organisations/natural-england' },
+          { id: 'ea', level: 1, category: 'National agency', name: 'Environment Agency', type: 'Statutory', desc: 'Regulates water, flood risk and pollution. Works with DC on flood risk management.', url: 'https://www.gov.uk/government/organisations/environment-agency' },
+          { id: 'defra', level: 1, category: 'National agency', name: 'Defra', type: 'Gov Dept', desc: 'Funds and sets policy for environment, farming, food and rural affairs.', url: 'https://www.gov.uk' },
+          { id: 'dnl', level: 1, category: 'Protected landscape', name: 'Dorset National Landscape', type: 'Partnership', desc: 'Covers 43% of Dorset. Led by DC, partnership of 42+ organisations.', url: 'https://dorset-nl.org.uk' },
+
+          // Level 2: Sub-Outcomes
+          { id: 'out_nature', level: 2, category: 'Sub-outcome', name: 'Nature & Biodiversity Recovery', type: 'Outcome', desc: 'Restoring natural habitats, halting biodiversity loss, and expanding ecological networks across Dorset.' },
+          { id: 'out_climate', level: 2, category: 'Sub-outcome', name: 'Climate Change & Net Zero', type: 'Outcome', desc: 'Reducing carbon emissions and building resilience to climate impacts.' },
+          { id: 'out_water', level: 2, category: 'Sub-outcome', name: 'Water Quality & Flood Resilience', type: 'Outcome', desc: 'Improving catchment health, reducing pollutants, and managing coastal/fluvial flood risks.' },
+          { id: 'out_landscape', level: 2, category: 'Sub-outcome', name: 'Landscape Conservation', type: 'Outcome', desc: 'Protecting the aesthetic, cultural, and ecological value of protected landscapes.' },
+
+          // Level 3: Programmes & Initiatives
+          { id: 'prog_lnrs', level: 3, category: 'Programme', name: 'Local Nature Recovery Strategy (LNRS)', type: 'Statutory Strategy', desc: 'Spatial strategy to restore nature, led by Dorset Council with BCP and Natural England.' },
+          { id: 'prog_ceap', level: 3, category: 'Programme', name: 'Climate & Ecology Action Plan', type: 'Local Strategy', desc: 'Dorset Council’s internal plan to reach net zero and tackle ecological emergencies.' },
+          { id: 'prog_catchment', level: 3, category: 'Programme', name: 'Catchment-based Approach', type: 'Initiative', desc: 'Partnership approach to managing water quality at a river catchment level.' },
+          { id: 'prog_fipl', level: 3, category: 'Programme', name: 'Farming in Protected Landscapes', type: 'Funding Programme', desc: 'Defra funding distributed locally to support nature-friendly farming.' },
+          { id: 'prog_purbeck', level: 3, category: 'Programme', name: 'Purbeck Heaths NNR', type: 'Initiative', desc: 'Super-national nature reserve co-designated to join up fragmented heathland.' }
+        ];
+
+        // Level 4: Levers & Relationships
+        const rawLinks = [
+          { source: 'dc', target: 'out_climate', lever: 'Strategic Leadership', desc: 'Responsible authority leading the county-wide strategy.' },
+          { source: 'dc', target: 'out_nature', lever: 'Strategic Leadership', desc: 'Statutory duty to conserve and enhance biodiversity.' },
+          { source: 'bcp', target: 'out_nature', lever: 'Supporting Partner', desc: 'Collaborates on cross-boundary ecological networks.' },
+          { source: 'ne', target: 'out_nature', lever: 'Statutory Advisor', desc: 'Provides guidance and signs off on local targets.' },
+          { source: 'ea', target: 'out_water', lever: 'Regulator & Funder', desc: 'Enforces standards and provides capital funding for defences.' },
+          { source: 'defra', target: 'out_climate', lever: 'National Policy Framework', desc: 'Sets the legally binding targets councils must hit.' },
+          { source: 'dnl', target: 'out_landscape', lever: 'Direct Delivery', desc: 'On-the-ground management of protected areas.' },
+
+          // Connecting to L3 Programmes
+          { source: 'dc', target: 'prog_lnrs', lever: 'Responsible Authority', desc: 'Legally mandated to prepare and publish the LNRS.' },
+          { source: 'bcp', target: 'prog_lnrs', lever: 'Supporting Authority', desc: 'Provides data and strategy alignment for the conurbation.' },
+          { source: 'ne', target: 'prog_lnrs', lever: 'Advisory & Funding', desc: 'Supplies national datasets and grant funding for the strategy.' },
+          { source: 'prog_lnrs', target: 'out_nature', lever: 'Delivery Mechanism', desc: 'The primary spatial tool for achieving the nature outcome.' },
+          
+          { source: 'dc', target: 'prog_ceap', lever: 'Owner/Author', desc: 'Council-owned strategy directing internal resources.' },
+          { source: 'prog_ceap', target: 'out_climate', lever: 'Delivery Mechanism', desc: 'Drives the reduction in organisational emissions.' },
+
+          { source: 'ea', target: 'prog_catchment', lever: 'Lead Partner', desc: 'Convenes local partners and shares data.' },
+          { source: 'dnl', target: 'prog_catchment', lever: 'Local Facilitator', desc: 'Works with farmers in the landscape to improve runoff.' },
+          { source: 'prog_catchment', target: 'out_water', lever: 'Delivery Mechanism', desc: 'Improves metrics for river health.' },
+
+          { source: 'defra', target: 'prog_fipl', lever: 'Funder', desc: 'Provides the national funding pot.' },
+          { source: 'dnl', target: 'prog_fipl', lever: 'Distributor', desc: 'Assesses and awards local grants to farmers.' },
+          { source: 'prog_fipl', target: 'out_landscape', lever: 'Delivery Mechanism', desc: 'Enhances landscape character via land management.' },
+
+          { source: 'ne', target: 'prog_purbeck', lever: 'Co-designator', desc: 'Facilitated the creation of the super-reserve.' },
+          { source: 'prog_purbeck', target: 'out_nature', lever: 'Delivery Mechanism', desc: 'Provides a large-scale, resilient habitat block.' }
+        ];
+
+        // --- HELPER FUNCTIONS ---
+        const calculateLayout = (nodes) => {
+          const levels = { 1: [], 2: [], 3: [] };
+          nodes.forEach(n => levels[n.level].push(n));
+
+          const radii = { 1: 150, 2: 380, 3: 650 };
+          const center = { x: 800, y: 800 }; 
+          const positionedNodes = [];
+
+          Object.keys(levels).forEach(level => {
+            const group = levels[level];
+            const radius = radii[level];
+            const angleStep = (2 * Math.PI) / group.length;
+            const offset = level == 2 ? Math.PI / 8 : 0; 
+
+            group.forEach((node, index) => {
+              const angle = (index * angleStep) + offset;
+              positionedNodes.push({
+                ...node,
+                x: center.x + radius * Math.cos(angle),
+                y: center.y + radius * Math.sin(angle)
+              });
+            });
+          });
+
+          return positionedNodes;
+        };
+
+        const levelColors = {
+          1: { bg: '#4f46e5', text: 'text-indigo-600', ring: 'ring-indigo-300' }, 
+          2: { bg: '#10b981', text: 'text-emerald-600', ring: 'ring-emerald-300' }, 
+          3: { bg: '#f59e0b', text: 'text-amber-600', ring: 'ring-amber-300' }  
+        };
+
+        function App() {
+          const [nodes, setNodes] = useState([]);
+          const [links, setLinks] = useState([]);
+          
+          const [transform, setTransform] = useState({ x: 0, y: 0, k: 0.6 });
+          const [selectedEntity, setSelectedEntity] = useState(null); 
+          const [hoveredNodeId, setHoveredNodeId] = useState(null);
+          const [searchQuery, setSearchQuery] = useState('');
+          
+          const svgRef = useRef(null);
+          const isDragging = useRef(false);
+          const dragStart = useRef({ x: 0, y: 0 });
+
+          useEffect(() => {
+            setNodes(calculateLayout(rawNodes));
+            setLinks(rawLinks);
+            
+            if (svgRef.current) {
+              const rect = svgRef.current.getBoundingClientRect();
+              setTransform({ 
+                x: (rect.width / 2) - (800 * 0.6), 
+                y: (rect.height / 2) - (800 * 0.6), 
+                k: 0.6 
+              });
+            }
+          }, []);
+
+          const handleWheel = (e) => {
+            e.preventDefault();
+            const scaleAdjust = e.deltaY > 0 ? 0.9 : 1.1;
+            let newK = transform.k * scaleAdjust;
+            newK = Math.max(0.1, Math.min(newK, 3)); 
+
+            const rect = svgRef.current.getBoundingClientRect();
+            const mouseX = e.clientX - rect.left;
+            const mouseY = e.clientY - rect.top;
+
+            const newX = mouseX - (mouseX - transform.x) * scaleAdjust;
+            const newY = mouseY - (mouseY - transform.y) * scaleAdjust;
+
+            setTransform({ x: newX, y: newY, k: newK });
+          };
+
+          const handleMouseDown = (e) => {
+            if (e.target.tagName !== 'svg' && e.target.tagName !== 'g') return;
+            isDragging.current = true;
+            dragStart.current = { x: e.clientX - transform.x, y: e.clientY - transform.y };
+          };
+
+          const handleMouseMove = (e) => {
+            if (!isDragging.current) return;
+            setTransform({
+              ...transform,
+              x: e.clientX - dragStart.current.x,
+              y: e.clientY - dragStart.current.y
+            });
+          };
+
+          const handleMouseUp = () => {
+            isDragging.current = false;
+          };
+
+          const centerView = () => {
+            if (!svgRef.current) return;
+            const rect = svgRef.current.getBoundingClientRect();
+            setTransform({ 
+              x: (rect.width / 2) - (800 * 0.6), 
+              y: (rect.height / 2) - (800 * 0.6), 
+              k: 0.6 
+            });
+            setSelectedEntity(null);
+          };
+
+          const activeNodeId = (selectedEntity && selectedEntity.id) ? selectedEntity.id : hoveredNodeId;
+          
+          const connectedNodeIds = useMemo(() => {
+            if (!activeNodeId) return new Set();
+            const connected = new Set([activeNodeId]);
+            links.forEach(l => {
+              if (l.source === activeNodeId) connected.add(l.target);
+              if (l.target === activeNodeId) connected.add(l.source);
+            });
+            return connected;
+          }, [activeNodeId, links]);
+
+          const isNodeVisible = (nodeId) => {
+            if (!activeNodeId) {
+              if (searchQuery) return rawNodes.find(n => n.id === nodeId)?.name.toLowerCase().includes(searchQuery.toLowerCase());
+              return true;
+            }
+            return connectedNodeIds.has(nodeId);
+          };
+
+          const isLinkVisible = (link) => {
+            if (!activeNodeId) return true;
+            return link.source === activeNodeId || link.target === activeNodeId;
+          };
+
+          const renderDetailsPanel = () => {
+            if (!selectedEntity) {
+              return (
+                <div className="flex flex-col items-center justify-center h-full text-slate-400 p-8 text-center space-y-4">
+                  <Network size={48} strokeWidth={1} />
+                  <div>
+                    <h3 className="text-lg font-medium text-slate-600 mb-2">Explore the System Map</h3>
+                    <p className="text-sm">Click on any circle (Organisation, Outcome, or Programme) to drill down into its connections.</p>
+                    <p className="text-sm mt-2">Click on the connecting lines to view the Level 4 Levers that link them together.</p>
+                  </div>
+                </div>
+              );
+            }
+
+            const isLink = selectedEntity.lever !== undefined;
+
+            if (isLink) {
+              const sourceNode = nodes.find(n => n.id === selectedEntity.source);
+              const targetNode = nodes.find(n => n.id === selectedEntity.target);
+              return (
+                <div className="p-6 animate-fade-in">
+                  <div className="inline-flex items-center space-x-2 text-xs font-semibold uppercase tracking-wider text-purple-600 bg-purple-100 px-3 py-1 rounded-full mb-4">
+                    <Zap size={14} />
+                    <span>Level 4: Lever & Link</span>
+                  </div>
+                  <h2 className="text-2xl font-bold text-slate-800 mb-2">{selectedEntity.lever}</h2>
+                  <p className="text-slate-600 mb-6">{selectedEntity.desc}</p>
+                  
+                  <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-3">Connecting</h3>
+                  <div className="space-y-3">
+                    <div className="p-3 bg-slate-50 rounded-lg border border-slate-100">
+                      <span className="text-xs text-slate-500 block mb-1">From: {sourceNode?.category}</span>
+                      <span className="font-medium text-slate-800">{sourceNode?.name}</span>
+                    </div>
+                    <div className="flex justify-center text-slate-300">
+                      <Activity size={20} />
+                    </div>
+                    <div className="p-3 bg-slate-50 rounded-lg border border-slate-100">
+                      <span className="text-xs text-slate-500 block mb-1">To: {targetNode?.category}</span>
+                      <span className="font-medium text-slate-800">{targetNode?.name}</span>
+                    </div>
+                  </div>
+                </div>
+              );
+            }
+
+            const levelName = selectedEntity.level === 1 ? 'System Level' : selectedEntity.level === 2 ? 'Sub-Outcome Level' : 'Programme Level';
+            const color = levelColors[selectedEntity.level];
+            const relatedLinks = links.filter(l => l.source === selectedEntity.id || l.target === selectedEntity.id);
+
+            return (
+              <div className="p-6 animate-fade-in h-full overflow-y-auto">
+                <div className={`inline-flex items-center space-x-2 text-xs font-semibold uppercase tracking-wider px-3 py-1 rounded-full mb-4 bg-opacity-20 ${color.text} bg-current`}>
+                  {selectedEntity.level === 1 ? <Building2 size={14} /> : selectedEntity.level === 2 ? <Target size={14} /> : <Layers size={14} />}
+                  <span>Level {selectedEntity.level}: {levelName}</span>
+                </div>
+                
+                <h2 className="text-2xl font-bold text-slate-800 mb-1">{selectedEntity.name}</h2>
+                <div className="text-sm font-medium text-slate-500 mb-4">{selectedEntity.type} • {selectedEntity.category}</div>
+                
+                <p className="text-slate-700 leading-relaxed mb-6">{selectedEntity.desc}</p>
+                
+                {selectedEntity.url && (
+                  <a href={selectedEntity.url} target="_blank" rel="noreferrer" className="inline-flex items-center space-x-2 text-indigo-600 hover:text-indigo-800 font-medium text-sm mb-8 transition-colors">
+                    <span>View Data Source</span>
+                    <ExternalLink size={14} />
+                  </a>
+                )}
+
+                <div className="border-t border-slate-100 pt-6">
+                  <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-4">Network Relationships (Level 4)</h3>
+                  {relatedLinks.length === 0 && <p className="text-sm text-slate-500">No established links in current map.</p>}
+                  <ul className="space-y-3">
+                    {relatedLinks.map((link, idx) => {
+                      const isSource = link.source === selectedEntity.id;
+                      const otherNodeId = isSource ? link.target : link.source;
+                      const otherNode = nodes.find(n => n.id === otherNodeId);
+                      if(!otherNode) return null;
+                      return (
+                        <li key={idx} 
+                            className="p-3 bg-white border border-slate-200 rounded-lg shadow-sm hover:shadow-md hover:border-indigo-300 transition-all cursor-pointer"
+                            onClick={() => setSelectedEntity(link)}>
+                          <div className="flex items-start">
+                            <Activity className="w-4 h-4 text-slate-400 mt-0.5 mr-2 flex-shrink-0" />
+                            <div>
+                              <div className="text-sm font-medium text-slate-800">{link.lever}</div>
+                              <div className="text-xs text-slate-500 mt-0.5">
+                                {isSource ? 'Out to' : 'In from'} <span className="font-semibold text-slate-700">{otherNode.name}</span> ({otherNode.category})
+                              </div>
+                            </div>
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              </div>
+            );
+          };
+
+          return (
+            <div className="flex flex-col h-screen bg-slate-50 font-sans overflow-hidden">
+              <header className="bg-white border-b border-slate-200 px-6 py-4 flex items-center justify-between z-10 shrink-0">
+                <div>
+                  <h1 className="text-xl font-bold text-slate-800 flex items-center">
+                    <Network className="w-6 h-6 mr-2 text-indigo-600" />
+                    Dorset Council System Map
+                  </h1>
+                  <p className="text-sm text-slate-500 mt-1">Environmental Sustainability: Outcomes & Levers</p>
+                </div>
+                
+                <div className="flex items-center space-x-6 text-sm">
+                  <div className="flex items-center space-x-4">
+                    <div className="flex items-center space-x-1">
+                      <span className="w-3 h-3 rounded-full bg-[#4f46e5]"></span>
+                      <span className="text-slate-600">L1: Org</span>
+                    </div>
+                    <div className="flex items-center space-x-1">
+                      <span className="w-3 h-3 rounded-full bg-[#10b981]"></span>
+                      <span className="text-slate-600">L2: Outcome</span>
+                    </div>
+                    <div className="flex items-center space-x-1">
+                      <span className="w-3 h-3 rounded-full bg-[#f59e0b]"></span>
+                      <span className="text-slate-600">L3: Programme</span>
+                    </div>
+                     <div className="flex items-center space-x-1 pl-2 border-l border-slate-200">
+                      <Activity size={14} className="text-slate-400"/>
+                      <span className="text-slate-600">L4: Levers</span>
+                    </div>
+                  </div>
+                  
+                  <div className="relative">
+                    <Search className="w-4 h-4 absolute left-3 top-1/2 transform -translate-y-1/2 text-slate-400" />
+                    <input 
+                      type="text" 
+                      placeholder="Search map..." 
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      className="pl-9 pr-4 py-2 bg-slate-100 border-none rounded-full text-sm focus:ring-2 focus:ring-indigo-500 outline-none w-48 transition-all"
+                    />
+                  </div>
+                </div>
+              </header>
+
+              <div className="flex flex-1 overflow-hidden">
+                <div className="flex-1 relative overflow-hidden bg-slate-100 cursor-move" 
+                     onWheel={handleWheel}
+                     onMouseDown={handleMouseDown}
+                     onMouseMove={handleMouseMove}
+                     onMouseUp={handleMouseUp}
+                     onMouseLeave={handleMouseUp}>
+                  
+                  <div className="absolute top-4 left-4 flex flex-col space-y-2 z-10">
+                    <button onClick={() => setTransform(t => ({ ...t, k: t.k * 1.2 }))} className="p-2 bg-white rounded-lg shadow-sm border border-slate-200 text-slate-600 hover:text-indigo-600 hover:bg-indigo-50">
+                      <ZoomIn size={20} />
+                    </button>
+                    <button onClick={() => setTransform(t => ({ ...t, k: t.k * 0.8 }))} className="p-2 bg-white rounded-lg shadow-sm border border-slate-200 text-slate-600 hover:text-indigo-600 hover:bg-indigo-50">
+                      <ZoomOut size={20} />
+                    </button>
+                    <button onClick={centerView} className="p-2 bg-white rounded-lg shadow-sm border border-slate-200 text-slate-600 hover:text-indigo-600 hover:bg-indigo-50">
+                      <Maximize size={20} />
+                    </button>
+                  </div>
+
+                  <svg ref={svgRef} className="w-full h-full">
+                    <g transform={`translate(${transform.x}, ${transform.y}) scale(${transform.k})`}>
+                      
+                      <circle cx={800} cy={800} r={40} fill="#f1f5f9" stroke="#cbd5e1" strokeWidth="2" strokeDasharray="4 4" />
+                      <text x={800} y={800} textAnchor="middle" dominantBaseline="middle" className="text-[10px] fill-slate-400 font-medium uppercase tracking-widest">Dorset</text>
+
+                      {links.map((link, i) => {
+                        const source = nodes.find(n => n.id === link.source);
+                        const target = nodes.find(n => n.id === link.target);
+                        if (!source || !target) return null;
+
+                        const isSelected = selectedEntity === link;
+                        const isFaded = !isLinkVisible(link);
+
+                        const dx = target.x - source.x;
+                        const dy = target.y - source.y;
+                        const cx = source.x + dx / 2 - dy * 0.2; 
+                        const cy = source.y + dy / 2 + dx * 0.2;
+
+                        return (
+                          <g key={`link-${i}`} 
+                             className={`transition-opacity duration-300 ${isFaded ? 'opacity-10' : 'opacity-100'}`}
+                             onClick={(e) => { e.stopPropagation(); setSelectedEntity(link); }}
+                             style={{ cursor: 'pointer' }}>
+                            
+                            <path d={`M ${source.x} ${source.y} Q ${cx} ${cy} ${target.x} ${target.y}`} 
+                                  fill="none" stroke="transparent" strokeWidth="20" />
+                            
+                            <path 
+                              d={`M ${source.x} ${source.y} Q ${cx} ${cy} ${target.x} ${target.y}`}
+                              fill="none" 
+                              stroke={isSelected ? '#8b5cf6' : '#cbd5e1'} 
+                              strokeWidth={isSelected ? 4 : 2}
+                              className="transition-all duration-300 hover:stroke-indigo-400 hover:stroke-[3px]"
+                              strokeDasharray={link.lever.includes('Funding') ? "5,5" : "none"}
+                            />
+                            
+                            {(isSelected || activeNodeId === source.id || activeNodeId === target.id) && !isFaded && (
+                              <g transform={`translate(${source.x + dx*0.5 - dy*0.1}, ${source.y + dy*0.5 + dx*0.1})`}>
+                                <rect x="-60" y="-12" width="120" height="24" rx="12" fill="white" stroke={isSelected ? '#8b5cf6' : '#e2e8f0'} className="shadow-sm"/>
+                                <text textAnchor="middle" dominantBaseline="middle" className="text-[10px] font-semibold fill-slate-600 pointer-events-none">
+                                  {link.lever.length > 20 ? link.lever.substring(0,18)+'...' : link.lever}
+                                </text>
+                              </g>
+                            )}
+                          </g>
+                        );
+                      })}
+
+                      {nodes.map(node => {
+                        const color = levelColors[node.level];
+                        const isSelected = selectedEntity && selectedEntity.id === node.id;
+                        const isFaded = !isNodeVisible(node.id);
+                        
+                        return (
+                          <g key={node.id} 
+                             transform={`translate(${node.x}, ${node.y})`}
+                             className={`transition-opacity duration-300 cursor-pointer ${isFaded ? 'opacity-20' : 'opacity-100'}`}
+                             onClick={(e) => { e.stopPropagation(); setSelectedEntity(node); }}
+                             onMouseEnter={() => setHoveredNodeId(node.id)}
+                             onMouseLeave={() => setHoveredNodeId(null)}>
+                            
+                            <circle 
+                              r={node.level === 1 ? 35 : node.level === 2 ? 28 : 22} 
+                              fill={color.bg}
+                              className={`transition-all duration-300 ${isSelected ? `stroke-4 stroke-white shadow-xl` : 'stroke-white stroke-2'}`}
+                              style={{ filter: isSelected ? 'drop-shadow(0px 4px 12px rgba(0,0,0,0.2))' : 'drop-shadow(0px 2px 4px rgba(0,0,0,0.1))' }}
+                            />
+                            
+                            <g transform="translate(-12, -12)" className="text-white pointer-events-none">
+                               {node.level === 1 && <Building2 size={24} color="white" />}
+                               {node.level === 2 && <Target size={24} color="white" />}
+                               {node.level === 3 && <Layers size={24} color="white" />}
+                            </g>
+
+                            <rect x="-60" y={node.level === 1 ? 42 : 32} width="120" height="20" rx="4" fill="rgba(255,255,255,0.8)" className="pointer-events-none" />
+                            
+                            <text 
+                              y={node.level === 1 ? 52 : 42} 
+                              textAnchor="middle" 
+                              className={`text-xs font-bold pointer-events-none ${isSelected ? 'fill-indigo-900' : 'fill-slate-700'}`}>
+                              {node.name.length > 20 ? node.name.substring(0,20)+'...' : node.name}
+                            </text>
+                          </g>
+                        );
+                      })}
+                    </g>
+                  </svg>
+                </div>
+
+                <div className="w-96 bg-white border-l border-slate-200 shadow-xl flex-shrink-0 z-20">
+                   {renderDetailsPanel()}
+                </div>
+
+              </div>
+            </div>
+          );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
